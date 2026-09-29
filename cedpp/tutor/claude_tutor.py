@@ -37,6 +37,9 @@ necessarily new writing): answer their question if they typed one, otherwise \
 explain what's in the circle and how to think about it. Use up to 4 sentences, \
 put a worked step or a key idea in extras, and never skip a circled request.
 
+If you're given what the teacher just said, use it: connect the notes to the \
+teacher's explanation, and mention anything the teacher said that the notes missed.
+
 Set skip to true when there's nothing worth a comment: stray marks, scribbles, \
 a single letter or number, crossed-out text, page numbers, decorations, or \
 tablet interface elements."""
@@ -147,7 +150,9 @@ class ClaudeTutor(NoteTutor):
                 {"type": "text", "text": "Whole page (the area in question is boxed in red):"},
                 image_block(png_bytes(request.page, max_side=1200, box=request.bbox)),
                 {"type": "text", "text": f"Your recent comments on this page:\n{history}"},
-            ],
+            ] + ([{"type": "text", "text": "What the teacher said just before (automatic "
+                   "transcript of accented speech, may contain errors):\n"
+                   + request.lecture_context}] if request.lecture_context else []),
         }]
 
     def analyze(self, request: TutorRequest) -> Tip:

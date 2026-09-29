@@ -54,9 +54,10 @@ class ResultRow(QFrame):
         title.setTextFormat(Qt.RichText)
         title.setStyleSheet("font-size: 15px; font-weight: 700;")
         col.addWidget(title)
-        where = QLabel(f"{html.escape(library.relative(hit.page.folder))}  ·  "
+        where = QLabel(f"{library.relative(hit.page.folder)}  ·  "
                        f"{hit.page.created_at:%b %d, %Y}"
                        + (f"  ·  found in {hit.where}" if hit.where else ""))
+        where.setTextFormat(Qt.PlainText)
         where.setObjectName("Small")
         col.addWidget(where)
         if hit.snippet and hit.where != "Title":

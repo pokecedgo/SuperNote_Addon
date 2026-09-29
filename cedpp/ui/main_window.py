@@ -24,6 +24,9 @@ from . import theme
 from .ask_popup import AskPopup
 from .comments_panel import CommentsPanel
 from .connect_dialog import DEMO, ConnectDialog
+from ..audio import AudioError, fmt_time
+from .lecture_audio import ClipPlayer, LectureAudio
+from .lecture_digest import LectureDigestDialog
 from .library_view import LibraryView
 from .neat_service import NeatService
 from .page_view import Anchor, PageView
@@ -67,8 +70,18 @@ class Logo(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self, config: AppConfig, tutor: NoteTutor, study: StudyAssistant,
                  source_factory: Callable[[str], FrameSource],
-                 autoconnect: Optional[str] = None) -> None:
+                 autoconnect: Optional[str] = None,
+                 lecture: Optional[LectureAudio] = None) -> None:
         super().__init__()
+        self.lecture = lecture
+        self.clips = ClipPlayer()
+        self._session_folder: Optional[Path] = None
+        self._digest_open = False
+        if lecture is not None:
+            lecture.transcript_updated.connect(lambda _n: self._tick())
+            lecture.digest_ready.connect(self._show_digest)
+            lecture.digest_failed.connect(
+                lambda msg: self._set_status(f"Lecture side notes unavailable: {msg}"))
         self.cfg = config
         self.tutor = tutor
         self.study = study
@@ -200,6 +213,7 @@ class MainWindow(QMainWindow):
         self.panel.card_clicked.connect(self._select)
         self.panel.resolve_requested.connect(self._resolve)
         self.panel.retry_requested.connect(self._retry)
+        self.panel.play_requested.connect(self._play_comment)
         body.addWidget(self.panel)
         body.addStretch(1)
         self.stack.addWidget(live)
@@ -213,6 +227,10 @@ class MainWindow(QMainWindow):
         self.status.setObjectName("Small")
         foot.addWidget(self.status)
         foot.addStretch(1)
+        self.mic_label = QLabel("")
+        self.mic_label.setObjectName("Small")
+        foot.addWidget(self.mic_label)
+        foot.addSpacing(16)
         self.tutor_label = QLabel(f"Tutor: {self.tutor.name}")
         self.tutor_label.setObjectName("Small")
         foot.addWidget(self.tutor_label)
@@ -352,9 +370,17 @@ class MainWindow(QMainWindow):
         self.mirror.start_recording()
         self.page_view.set_recording(True)
         self.ask_btn.setEnabled(True)
+        self._session_folder = self.cfg.sessions_dir / time.strftime("%Y-%m-%d_%H-%M-%S")
+        audio_note = ""
+        if self.lecture is not None and self.cfg.audio.enabled:
+            try:
+                self.lecture.start(context_hint=self._notes_context())
+                audio_note = " Listening to the lecture too."
+            except AudioError as exc:
+                audio_note = f" (No lecture audio: {exc})"
         self._tick()
         self._update_page_label()
-        self._set_status("Recording — Ced++ comments whenever you pause writing.")
+        self._set_status("Recording — Ced++ comments whenever you pause writing." + audio_note)
 
     def _stop_recording(self) -> None:
         self.recording = False
@@ -369,13 +395,19 @@ class MainWindow(QMainWindow):
             if frame is not None:
                 self.page_snapshots[self.page_index] = frame
         self._save_session()
+        if self.lecture is not None and self.lecture.active and self._session_folder:
+            self.lecture.stop(self._session_folder, self._notes_context())
+            self._set_status("Recording stopped. Finishing the lecture transcript and "
+                             "looking for important side notes…")
+            self.mic_label.setText("🎙 finishing transcript…")
 
     def _save_session(self) -> None:
         if not any(c.status != Status.SKIPPED for c in self.store.comments.values()):
             self._set_status("Recording stopped.")
             return
         try:
-            folder = self.store.save_session(self.cfg.sessions_dir, self.page_snapshots)
+            folder = self.store.save_session(self.cfg.sessions_dir, self.page_snapshots,
+                                             self._session_folder)
             self._set_status(f"Recording stopped. Comments saved to {folder.relative_to(folder.parents[1])}/")
         except OSError as exc:
             self._set_status(f"Recording stopped, but saving failed: {exc}")
@@ -384,6 +416,47 @@ class MainWindow(QMainWindow):
         if self.recording:
             s = int(time.monotonic() - self.record_started)
             self.record_btn.setText(f"■  Stop  {s // 60:02d}:{s % 60:02d}")
+            lecture = self.lecture
+            if lecture is not None and lecture.active and lecture.recorder is not None:
+                lines = len(lecture.live.transcript.segments) if lecture.live else 0
+                level = "▮" * min(5, int(lecture.recorder.level * 60)) or "▯"
+                extra = f"{lines} lines transcribed" if lecture.live else lecture.note
+                self.mic_label.setText(f"🎙 {level}  {fmt_time(lecture.now() or 0)} · {extra}")
+
+    # ------------------------------------------------------------------ lecture audio
+    def _notes_context(self) -> str:
+        titles = [f"{c.tip.title}: {c.tip.recognized}" for c in self.store.comments.values()
+                  if c.tip and not c.tip.skip]
+        return "\n".join(titles[-30:])
+
+    def _play_comment(self, cid: int) -> None:
+        c = self.store.get(cid)
+        if c is None or c.audio_t is None:
+            return
+        start = c.audio_t - self.cfg.audio.replay_before_s
+        self._play_at(start)
+
+    def _play_at(self, start: float) -> None:
+        lecture = self.lecture
+        saved = lecture.saved_audio if lecture else None
+        if lecture is not None and lecture.recorder is not None and saved is None:
+            self._set_status(self.clips.play(lecture.recorder, start))
+        elif saved is not None and Path(saved).exists():
+            self._set_status(self.clips.play_file(Path(saved), start))
+
+    def _show_digest(self, result, folder) -> None:
+        self.mic_label.setText("")
+        if result is None:
+            self._set_status("Recording stopped. No speech was transcribed, so there are no "
+                             "lecture side notes.")
+            return
+        n = len(result.get("items", []))
+        self._set_status(f"Lecture side notes ready: {n} item{'s' if n != 1 else ''}. "
+                         f"Saved in {folder.name}/.")
+        dialog = LectureDigestDialog(result, folder, self._play_at, self)
+        self._digest_open = True
+        dialog.finished.connect(lambda _r: (setattr(self, "_digest_open", False), self.clips.stop()))
+        dialog.open()
 
     def _update_page_label(self) -> None:
         self.page_view.set_page_number(self.page_index + 1)
@@ -401,6 +474,7 @@ class MainWindow(QMainWindow):
         for ev in events:
             self.page_snapshots[ev.page_index] = ev.page
             comment = self.store.add(ev.page_index, ev.bbox, ev.crop, ev.page)
+            comment.audio_t = self.lecture.now() if self.lecture and self.lecture.active else None
             if ev.page_index == self.page_index:
                 self.panel.upsert(comment)
             self._queue.append(comment.id)
@@ -444,6 +518,7 @@ class MainWindow(QMainWindow):
             return
         crop, bbox = zone_crop(frame, zone)
         comment = self.store.add(self.page_index, bbox, crop, frame, zone=zone, question=question)
+        comment.audio_t = self.lecture.now() if self.lecture and self.lecture.active else None
         self.page_snapshots[self.page_index] = frame
         self.panel.upsert(comment)
         self._queue.insert(0, comment.id)          # your questions jump the queue
@@ -460,7 +535,9 @@ class MainWindow(QMainWindow):
                 continue
             request = TutorRequest(c.crop, c.page, c.bbox,
                                    self.store.history(c.page_index, self.cfg.tutor.history_items),
-                                   requested=c.requested, question=c.question)
+                                   requested=c.requested, question=c.question,
+                                   lecture_context=self.lecture.context(c.audio_t)
+                                   if self.lecture else "")
             thread = TutorThread(self.tutor, cid, request)
             thread.done.connect(self._on_tip)
             thread.failed.connect(self._on_tip_failed)
@@ -573,6 +650,8 @@ class MainWindow(QMainWindow):
             thread.wait(3000)
         self.library_view.detail.wait_for_threads()
         self.neat.wait()
+        if self.lecture is not None:
+            self.lecture.wait()
         super().closeEvent(event)
 
 

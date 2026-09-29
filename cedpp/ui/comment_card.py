@@ -60,6 +60,7 @@ class CommentCard(QFrame):
     clicked = Signal(int)
     resolve_requested = Signal(int)
     retry_requested = Signal(int)
+    play_requested = Signal(int)
 
     def __init__(self, comment: Comment, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -89,6 +90,15 @@ class CommentCard(QFrame):
         head.addLayout(who, 1)
         self.chip = NumberChip(comment.number)
         head.addWidget(self.chip, 0, Qt.AlignTop)
+        if comment.audio_t is not None:
+            m, s = divmod(int(comment.audio_t), 60)
+            play = QPushButton(f"▶ {m:02d}:{s:02d}")
+            play.setObjectName("Ghost")
+            play.setCursor(Qt.PointingHandCursor)
+            play.setToolTip("Hear what the teacher was saying at this moment")
+            play.setStyleSheet("font-size: 11px; padding: 2px 6px;")
+            play.clicked.connect(lambda: self.play_requested.emit(self.comment_id))
+            head.addWidget(play, 0, Qt.AlignTop)
         self.resolve_btn = QPushButton("✓")
         self.resolve_btn.setObjectName("IconButton")
         self.resolve_btn.setToolTip("Resolve (hide this comment)")

@@ -37,6 +37,7 @@ class Comment:
     page: Optional[np.ndarray] = field(default=None, repr=False)
     zone: Optional[List[Tuple[int, int]]] = None   # freehand loop drawn by the user
     question: str = ""
+    audio_t: Optional[float] = None       # seconds into the lecture recording
 
     @property
     def requested(self) -> bool:
@@ -54,6 +55,7 @@ class Comment:
             "error": self.error or None,
             "requested": self.requested, "question": self.question or None,
             "zone": [list(p) for p in self.zone] if self.zone else None,
+            "audio_t": round(self.audio_t, 1) if self.audio_t is not None else None,
         }
 
 
@@ -102,11 +104,12 @@ class CommentStore:
                 lines.append("")
         return "\n".join(lines)
 
-    def save_session(self, directory: Path, pages: Dict[int, np.ndarray]) -> Path:
+    def save_session(self, directory: Path, pages: Dict[int, np.ndarray],
+                     folder: Optional[Path] = None) -> Path:
         """Write comments.json, notes.md and page PNGs into a timestamped folder."""
         from PIL import Image
 
-        folder = directory / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        folder = folder or directory / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         folder.mkdir(parents=True, exist_ok=True)
         data = [c.to_dict() for c in self.comments.values() if c.status != Status.SKIPPED]
         (folder / "comments.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))

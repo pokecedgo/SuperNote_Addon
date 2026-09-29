@@ -59,9 +59,21 @@ class TutorConfig:
 
 
 @dataclass(frozen=True)
+class AudioConfig:
+    enabled: bool = True
+    whisper_model: str = "mlx-community/whisper-large-v3-turbo"
+    language: str = "en"          # the lecture's language (accent doesn't matter)
+    whisper_prompt: str = ""      # optional course vocabulary, e.g. "gradient, Jacobian"
+    chunk_s: float = 15.0         # transcribe in pieces of about this length (≈1 s of GPU each)
+    context_s: float = 90.0       # speech sent along with each comment
+    replay_before_s: float = 15.0 # ▶ on a comment starts this long before it
+
+
+@dataclass(frozen=True)
 class AppConfig:
     mirror: MirrorConfig = field(default_factory=MirrorConfig)
     ink: InkConfig = field(default_factory=InkConfig)
     tutor: TutorConfig = field(default_factory=TutorConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
     sessions_dir: Path = PROJECT_ROOT / "sessions"
     library_dir: Path = PROJECT_ROOT / "library"

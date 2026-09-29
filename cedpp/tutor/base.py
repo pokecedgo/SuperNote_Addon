@@ -35,6 +35,7 @@ class TutorRequest:
     history: List[str] = field(default_factory=list)  # recent comment titles on this page
     requested: bool = False          # the student circled this area and asked for help
     question: str = ""               # optional question typed with the request
+    lecture_context: str = ""        # what the teacher said just before (transcribed)
 
 
 class NoteTutor(ABC):

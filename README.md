@@ -77,6 +77,32 @@ Run **one** of these (after `source .venv/bin/activate`):
    - `comments.json`: the same comments with full detail
    - `page_N.png`: a snapshot of each page
 
+### Lecture audio: side notes you'd otherwise miss
+
+While you record, the app also records your Mac's microphone and transcribes the lecture as it goes. Transcription runs on your Mac with Whisper (large-v3-turbo on the Apple Silicon GPU), so the audio never leaves your computer.
+
+- **Better comments:** each Ced++ comment also sees roughly the last 90 seconds of what the teacher said. It can link your notes to the explanation and point out things you didn't write down.
+- **▶ on every comment** replays the lecture from just before you wrote that line.
+- **When you press Stop,** the transcript is finished and one Claude call scans it for what was said *outside* the lecture topic. A **"Heads-up from today's lecture"** popup lists:
+  - **Important, not part of the lecture:** exam dates and content, deadlines, homework, office hours, room changes, events. These are ranked by importance.
+  - **Asides, tips & analogies:** "think of it like…", stories, study advice, and "this is important" moments.
+
+  Each item shows the cue that gave it away ("by the way", "ojo", "before I forget", …) and has a ▶ button to hear it.
+- **Accents:** the prompt tells Claude the teacher has an Argentine accent and mixes in Spanish (*bueno, o sea, ojo, ¿viste?*). It reads through transcription errors, but never invents dates or numbers.
+- Each session folder also gets `lecture.m4a` (about 1 MB per minute), `transcript.txt`, `side_notes.json` and `lecture.md`.
+
+Setup (one time; the Whisper model is a ~1.6 GB download on first use):
+
+```bash
+uv pip install -r requirements-audio.txt
+```
+
+macOS will ask for **microphone access** for your terminal app the first time: click Allow. Run with `--no-audio` to turn audio off. `--demo` plays a synthesized, Spanish-accented demo lecture so you can try it without a class.
+
+Cost: transcription is free (it runs on your Mac). The side-notes scan is one text-only Claude call per lecture, roughly 10–20¢ for 75 minutes. Sending lecture context with comments adds a fraction of a cent per comment.
+
+**Recording lectures:** check your school's policy, and ask your professor. Many schools require permission to record.
+
 ### Notebooks: store finished pages
 
 When you finish a page, press **⤓ Store Page** (or **S**). You name the page and pick where it goes:
@@ -141,6 +167,8 @@ cedpp/
     claude_tutor.py          Claude call: system prompt, JSON schema, refusal fallback
     offline_tutor.py         canned tips for --offline demos
     study.py                 Neat Copy transcription, "Summarize Page", "Important Takeaways for Exam"
+    side_notes.py            finds announcements & asides in the lecture transcript
+  audio/                     mic recording, live Whisper transcription, demo lecture
   comments.py                Comment model, per-page numbering, session export
   library.py                 Notebooks: nested folders, stored pages, ordering, search
   ui/                        PySide6: theme, main window, page view, comment cards

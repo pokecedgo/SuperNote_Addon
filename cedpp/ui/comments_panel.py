@@ -48,6 +48,7 @@ class CommentsPanel(QFrame):
     card_clicked = Signal(int)
     resolve_requested = Signal(int)
     retry_requested = Signal(int)
+    play_requested = Signal(int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -98,6 +99,7 @@ class CommentsPanel(QFrame):
             card.clicked.connect(self.card_clicked)
             card.resolve_requested.connect(self.resolve_requested)
             card.retry_requested.connect(self.retry_requested)
+            card.play_requested.connect(self.play_requested)
             self.cards[comment.id] = card
             card.show()
         else:

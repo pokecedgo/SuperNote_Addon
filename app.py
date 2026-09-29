@@ -6,6 +6,7 @@ Usage:
   python app.py --ip 192.168.1.42  connect straight to your Supernote's mirror
   python app.py --demo             simulated notebook (no Supernote needed)
   python app.py --demo --offline   simulated notebook + canned tips (no API key needed)
+  python app.py --no-audio         don't record the lecture audio
 """
 from __future__ import annotations
 
@@ -42,8 +43,41 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--demo", action="store_true", help="use the simulated demo notebook")
     p.add_argument("--offline", action="store_true",
                    help="canned demo tips instead of Claude (no API key needed)")
+    p.add_argument("--no-audio", action="store_true",
+                   help="don't record or transcribe the lecture audio")
     p.add_argument("--debug", action="store_true")
     return p.parse_args()
+
+
+def build_lecture_audio(config, demo: bool, offline: bool):
+    """Microphone (or a synthesized demo lecture) + transcriber + side-notes finder."""
+    from cedpp.audio import (DEMO_LECTURE, SAMPLE_RATE, MicRecorder, PlaybackRecorder,
+                             ScriptTranscriber, WhisperTranscriber, synthesize_demo_lecture)
+    from cedpp.config import PROJECT_ROOT
+    from cedpp.tutor.side_notes import ClaudeSideNoteFinder, OfflineSideNoteFinder
+    from cedpp.ui.lecture_audio import LectureAudio
+
+    import numpy as np
+
+    def make_recorder():
+        if demo:
+            audio = synthesize_demo_lecture(PROJECT_ROOT / ".cache")
+            if audio is None:
+                audio = np.zeros(int(75 * SAMPLE_RATE), np.float32)
+            return PlaybackRecorder(audio)
+        return MicRecorder()
+
+    def make_transcriber():
+        if offline:
+            return ScriptTranscriber(DEMO_LECTURE) if demo else None
+        import importlib.util
+        if importlib.util.find_spec("mlx_whisper") is None:
+            return None
+        return WhisperTranscriber(config.audio.whisper_model, config.audio.language,
+                                  config.audio.whisper_prompt)
+
+    finder = OfflineSideNoteFinder() if offline else ClaudeSideNoteFinder(config.tutor)
+    return LectureAudio(config.audio, make_recorder, make_transcriber, finder)
 
 
 def main() -> int:
@@ -85,7 +119,9 @@ def main() -> int:
     app.setStyle("Fusion")
     apply_palette(app)
     app.setStyleSheet(STYLESHEET)
-    window = MainWindow(config, tutor, study, default_source_factory(config), autoconnect)
+    lecture = None if args.no_audio else build_lecture_audio(config, args.demo, args.offline)
+    window = MainWindow(config, tutor, study, default_source_factory(config), autoconnect,
+                        lecture)
     window.show()
     return app.exec()
 

@@ -1,0 +1,5 @@
+# Optional: lecture audio (recording, transcripts, side-notes digest)
+# Apple Silicon Macs. The Whisper model (~1.6 GB) downloads on first use.
+-r requirements.txt
+sounddevice>=0.5
+mlx-whisper>=0.4

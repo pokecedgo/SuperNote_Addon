@@ -1,0 +1,8 @@
+# SuperNote(Ced++) - Python 3.10+
+PySide6>=6.7
+numpy>=1.26
+Pillow>=10.0
+anthropic>=1.0
+
+# Development
+pytest>=8.0

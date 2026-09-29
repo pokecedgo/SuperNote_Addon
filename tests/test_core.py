@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from cedpp.comments import CommentStore, Status
 from cedpp.config import InkConfig
 from cedpp.ink import InkTracker
-from cedpp.mirror import iter_jpegs, normalize_address
+from cedpp.mirror import iter_images, iter_jpegs, normalize_address
 from cedpp.tutor import ClaudeTutor, Tip, TutorError, TutorRequest
 
 W, H = 600, 800
@@ -47,6 +47,25 @@ def test_iter_jpegs_splits_multipart_stream():
     body = (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + a +
             b"\r\n--frame\r\nContent-Type: image/jpeg\r\n\r\n" + b + b"\r\n")
     assert list(iter_jpegs(io.BytesIO(body), chunk_size=5)) == [a, b]
+
+
+def test_png_parts_labelled_jpeg_are_split_by_content_length():
+    """Real Supernote firmware sends PNG bodies labelled image/jpeg, and PNG data
+    can contain JPEG marker bytes - so parts must be split by Content-Length."""
+    png1 = b"\x89PNG\r\n\x1a\n" + b"\xff\xd8junk\xff\xd9" + b"A" * 50
+    png2 = b"\x89PNG\r\n\x1a\n" + b"B" * 70
+    def part(body):
+        return (b"--bnd\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(body)
+                + body + b"\r\n")
+    stream = io.BytesIO(part(png1) + part(png2) + b"--bnd--\r\n")
+    ct = "multipart/x-mixed-replace; boundary=bnd"
+    assert list(iter_images(stream, ct)) == [png1, png2]
+
+
+def test_parts_without_content_length_split_on_boundary():
+    body = b"--bnd\r\nContent-Type: image/png\r\n\r\nPNGDATA1\r\n--bnd\r\n\r\nPNGDATA2\r\n--bnd--"
+    assert list(iter_images(io.BytesIO(body), 'multipart/x-mixed-replace;boundary="bnd"')) == \
+        [b"PNGDATA1", b"PNGDATA2"]
 
 
 # ------------------------------------------------------------------ ink tracker

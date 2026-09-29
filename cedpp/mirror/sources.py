@@ -10,7 +10,7 @@ import numpy as np
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 
-from .mjpeg import iter_jpegs, open_stream
+from .mjpeg import iter_images, open_stream
 
 
 def qimage_to_gray(image: QImage) -> np.ndarray:
@@ -42,12 +42,15 @@ class MirrorSource(FrameSource):
         self._stream = None
 
     def frames(self) -> Iterator[np.ndarray]:
-        self._stream = open_stream(self.url, self.timeout)
+        self._stream = stream = open_stream(self.url, self.timeout)
         try:
-            for jpeg in iter_jpegs(self._stream):
-                image = QImage.fromData(jpeg, "JPG")
+            for data in iter_images(stream, stream.headers.get("Content-Type")):
+                image = QImage.fromData(data)   # sniffs PNG vs JPEG from the bytes
                 if not image.isNull():
                     yield qimage_to_gray(image)
+        except (AttributeError, ValueError) as exc:
+            # close() from another thread mid-read, or a corrupt frame.
+            raise OSError(f"mirror stream interrupted: {exc}") from exc
         finally:
             self.close()
 

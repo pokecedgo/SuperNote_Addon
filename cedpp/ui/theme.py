@@ -41,7 +41,7 @@ QPushButton {{
 QPushButton:hover {{ background: {PAPER_2}; }}
 QPushButton:pressed, QPushButton:checked {{ background: {INK}; color: {PAPER}; }}
 QPushButton:disabled {{ color: #A9A398; border-color: #B9B2A4; background: {PAPER}; }}
-#RecordButton {{ padding: 8px 20px; font-size: 14px; border-radius: 14px; min-width: 128px; }}
+#RecordButton {{ padding: 8px 16px; font-size: 14px; border-radius: 14px; min-width: 112px; }}
 #Ghost {{ border: none; background: transparent; padding: 4px 8px; }}
 #Ghost:hover {{ background: {PAPER_2}; }}
 #IconButton {{
@@ -49,6 +49,14 @@ QPushButton:disabled {{ color: #A9A398; border-color: #B9B2A4; background: {PAPE
     max-width: 24px; min-height: 24px; max-height: 24px; font-size: 12px;
 }}
 #IconButton:hover {{ border-color: {INK}; background: {PAPER}; }}
+
+#Segment {{ background: {PAPER_2}; border: 1.5px solid {INK}; border-radius: 14px; }}
+#Segment QPushButton {{
+    border: none; border-radius: 11px; padding: 5px 16px; background: transparent;
+}}
+#Segment QPushButton:hover {{ background: {PAPER}; }}
+#Segment QPushButton:checked {{ background: {INK}; color: {PAPER}; }}
+QTreeWidget, QInputDialog QLineEdit {{ font-size: 14px; }}
 
 #Pill {{
     background: {PAPER};
@@ -76,6 +84,7 @@ QLineEdit {{
     selection-background-color: {INK};
     selection-color: {PAPER};
 }}
+#SearchBox {{ padding: 6px 12px; font-size: 13px; border-radius: 14px; }}
 QListWidget {{
     background: {PAPER}; border: 1.2px solid {RULE}; border-radius: 12px; padding: 4px;
 }}

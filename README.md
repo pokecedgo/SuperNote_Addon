@@ -70,10 +70,40 @@ Run **one** of these (after `source .venv/bin/activate`):
 4. Write normally. About 2.5 seconds after you stop writing, a dashed box shows where Ced++ is reading, then a comment card appears beside that spot.
 5. Click a card or its numbered box on the page to highlight the pair. **✓** resolves (hides) a comment.
 6. Turn the page on your Supernote. The app notices the new page, and its comments start fresh.
+**Ask about a specific area:** while recording, press **◌ Ask about area** (or **A**) and draw a loop around anything on the page. It can be old notes, a diagram, a formula, or a problem you're stuck on. Type a question if you like (or leave it blank), then press **Ask Ced++**. The answer appears as a comment pinned to the shape you drew, and your questions jump ahead of automatic comments. Press **Esc** to cancel.
+
 7. Press **■ Stop**. The session is saved to `sessions/<date_time>/`:
    - `notes.md`: every comment, grouped by page, ready to paste into your notes
    - `comments.json`: the same comments with full detail
    - `page_N.png`: a snapshot of each page
+
+### Notebooks: store finished pages
+
+When you finish a page, press **⤓ Store Page** (or **S**). You name the page and pick where it goes:
+
+- **+ Notebook** creates a top-level notebook, such as *Calc III*. The first time you store a page, the app asks you for a notebook name.
+- **+ Folder** creates a folder inside the selected notebook or folder. Folders can nest, for example *Calc III / Midterm 1 / Week 3*.
+- The snapshot is saved with the Ced++ comments from that page.
+
+Switch the top bar to **Notebooks** to browse what you've stored:
+
+- Pick a notebook or folder on the left to see its pages as a numbered grid. **Drag** a page to reorder it.
+- **Click a page** and its **Neat Copy** slides out from behind it: the same notes, transcribed and rewritten in tidy handwriting (your wording and your mistakes are kept, just made readable). Click it again, or click another page, to tuck it away.
+- **Double-click** a page (or click **Open ›**) to open it. Each page has three buttons:
+  - **Summarize Page**: the topic, a short summary, and the key points
+  - **Important Takeaways for Exam**: what's likely to be tested and why, "watch out" mistakes (including ones on your page), and practice questions
+  - **Delete**: removes the page, after asking you to confirm
+- **‹ Move earlier / Move later ›** also reorder the open page.
+- Summaries and takeaways are saved with the page, so reopening it doesn't cost another API call. "Summarize again" regenerates them.
+- **Delete folder** removes a notebook or folder and everything in it, after asking you to confirm.
+
+Neat copies are made automatically in the background when you store a page. For older pages, one is made the first time you click the page. Each neat copy is one Claude call, and it also saves a text transcript of the page, which is what makes search work.
+
+### Search
+
+Type in **⌕ Search** at the top (or press **⌘F**) to search every notebook at once. It matches page titles, the neat-copy text, Ced++ comments, your questions, summaries and exam takeaways. Matching ignores case and accents, and every word you type must appear. Results show where each match was found, with a highlighted snippet. Click a result to open that page; **Back** returns to your results. If some pages don't have a neat copy yet, the search results offer **Make neat copies** so their contents become searchable.
+
+Everything is stored as plain files in `library/`, one folder per notebook or folder, with a `.png` and `.json` for each page. That makes it easy to back up or open in Finder. `library/` is git-ignored, so your notes stay on your Mac.
 
 **Requirements for mirroring:** the Mac and the Supernote must be on the **same Wi-Fi**, with **no VPN or proxy**. Campus Wi-Fi often blocks devices from talking to each other. If Scan finds nothing, connect both devices to a **phone hotspot**.
 
@@ -110,7 +140,9 @@ cedpp/
   tutor/
     claude_tutor.py          Claude call: system prompt, JSON schema, refusal fallback
     offline_tutor.py         canned tips for --offline demos
+    study.py                 Neat Copy transcription, "Summarize Page", "Important Takeaways for Exam"
   comments.py                Comment model, per-page numbering, session export
+  library.py                 Notebooks: nested folders, stored pages, ordering, search
   ui/                        PySide6: theme, main window, page view, comment cards
 tests/                       pytest (tracker, stream parsing, tutor parsing, store)
 ```

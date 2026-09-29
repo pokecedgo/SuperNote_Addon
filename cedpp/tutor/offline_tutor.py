@@ -39,4 +39,9 @@ class OfflineTutor(NoteTutor):
 
     def analyze(self, request: TutorRequest) -> Tip:
         time.sleep(self.delay_s)
+        if request.requested:
+            return Tip(False, "(circled area)", "Circled area",
+                       "Offline demo reply: with an API key, Ced++ reads the circled area and "
+                       "answers your question here.",
+                       ["Run without --offline to get a real explanation"])
         return next(self._tips)

@@ -52,6 +52,7 @@ class InkConfig:
 class TutorConfig:
     model: str = "claude-opus-5"
     effort: str = "low"          # fast, short tips; raise to "medium" for deeper ones
+    study_effort: str = "medium" # Summarize / Exam takeaways (not time-critical)
     max_tokens: int = 4000
     history_items: int = 8       # recent comments sent as context to avoid repeats
     max_parallel: int = 3
@@ -63,3 +64,4 @@ class AppConfig:
     ink: InkConfig = field(default_factory=InkConfig)
     tutor: TutorConfig = field(default_factory=TutorConfig)
     sessions_dir: Path = PROJECT_ROOT / "sessions"
+    library_dir: Path = PROJECT_ROOT / "library"

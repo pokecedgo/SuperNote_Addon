@@ -6,3 +6,5 @@ __pycache__/
 
 # Your recorded class sessions (page images + comments) stay local
 sessions/
+
+library/

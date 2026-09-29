@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 from typing import List, Optional, Tuple
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 
 class TutorError(Exception):
@@ -33,6 +33,8 @@ class TutorRequest:
     page: np.ndarray                 # whole page for context
     bbox: Tuple[int, int, int, int]
     history: List[str] = field(default_factory=list)  # recent comment titles on this page
+    requested: bool = False          # the student circled this area and asked for help
+    question: str = ""               # optional question typed with the request
 
 
 class NoteTutor(ABC):
@@ -41,6 +43,21 @@ class NoteTutor(ABC):
     @abstractmethod
     def analyze(self, request: TutorRequest) -> Tip:
         """Blocking call - run it off the UI thread. Raise TutorError on failure."""
+
+
+def zone_crop(page: np.ndarray, polygon: List[Tuple[int, int]], pad: int = 24) -> Tuple[
+        np.ndarray, Tuple[int, int, int, int]]:
+    """Crop to a freehand zone; everything outside the loop is whited out."""
+    pts = np.asarray(polygon, dtype=np.int32)
+    h, w = page.shape[:2]
+    x1, y1 = max(0, int(pts[:, 0].min()) - pad), max(0, int(pts[:, 1].min()) - pad)
+    x2, y2 = min(w, int(pts[:, 0].max()) + pad), min(h, int(pts[:, 1].max()) + pad)
+    mask = Image.new("L", (x2 - x1, y2 - y1), 0)
+    ImageDraw.Draw(mask).polygon([(int(x) - x1, int(y) - y1) for x, y in pts], fill=255)
+    inside = np.array(mask.filter(ImageFilter.MaxFilter(9))) > 0   # small margin around the loop
+    crop = page[y1:y2, x1:x2].copy()
+    crop[~inside] = 255
+    return crop, (x1, y1, x2, y2)
 
 
 def png_bytes(gray: np.ndarray, max_side: int = 1400,

@@ -211,3 +211,44 @@ def test_store_numbers_per_page_and_saves_session(tmp_path):
     assert (folder / "page_1.png").exists()
     saved = json.loads((folder / "comments.json").read_text())
     assert {d["status"] for d in saved} == {"ready", "pending"}
+
+
+# ------------------------------------------------------------------ ask about area
+
+def test_zone_crop_whites_out_everything_outside_the_loop():
+    from cedpp.tutor.base import zone_crop
+    page = np.zeros((400, 400), np.uint8)             # all ink
+    loop = [(100, 100), (300, 100), (300, 300), (100, 300)]
+    crop, (x1, y1, x2, y2) = zone_crop(page, loop, pad=20)
+    assert (x1, y1, x2, y2) == (80, 80, 320, 320)
+    assert crop[120, 120] == 0                        # inside kept
+    assert crop[2, 2] == 255                          # outside the loop whited out
+
+
+def test_circled_request_carries_the_question_to_claude():
+    calls = {}
+
+    class FakeMessages:
+        def create(self, **kw):
+            calls.update(kw)
+            return fake_response(GOOD)
+
+    client = SimpleNamespace(beta=SimpleNamespace(messages=FakeMessages()))
+    page = blank()
+    ClaudeTutor(client=client).analyze(TutorRequest(
+        page[0:100, 0:100], page, (0, 0, 100, 100), requested=True,
+        question="why is the gradient perpendicular?"))
+    texts = [b["text"] for b in calls["messages"][0]["content"] if b["type"] == "text"]
+    assert "why is the gradient perpendicular?" in texts[0]
+    assert "circled" in calls["system"]
+
+
+def test_zone_comment_is_saved_with_its_question(tmp_path):
+    s = CommentStore()
+    c = s.add(0, (0, 0, 50, 50), zone=[(0, 0), (50, 0), (50, 50)], question="what's this?")
+    assert c.requested
+    c.status, c.tip = Status.READY, Tip(False, "x", "Idea", "Because.", [])
+    folder = s.save_session(tmp_path, {})
+    saved = json.loads((folder / "comments.json").read_text())[0]
+    assert saved["question"] == "what's this?" and saved["zone"][1] == [50, 0]
+    assert "You asked: what's this?" in (folder / "notes.md").read_text()

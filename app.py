@@ -56,16 +56,17 @@ def main() -> int:
 
     from cedpp.config import APP_NAME, AppConfig
     from cedpp.mirror import normalize_address
-    from cedpp.tutor import ClaudeTutor, OfflineTutor
+    from cedpp.tutor import (ClaudeStudyAssistant, ClaudeTutor, OfflineStudyAssistant,
+                             OfflineTutor)
     from cedpp.ui.connect_dialog import DEMO
     from cedpp.ui.main_window import MainWindow, default_source_factory
     from cedpp.ui.theme import STYLESHEET, apply_palette
 
     config = AppConfig()
     if args.offline:
-        tutor = OfflineTutor()
+        tutor, study = OfflineTutor(), OfflineStudyAssistant()
     else:
-        tutor = ClaudeTutor(config.tutor)
+        tutor, study = ClaudeTutor(config.tutor), ClaudeStudyAssistant(config.tutor)
         if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             print("Note: ANTHROPIC_API_KEY isn't set. If you haven't run `ant auth login`, "
                   "comments will show a sign-in error. Use --offline for canned demo tips.")
@@ -84,7 +85,7 @@ def main() -> int:
     app.setStyle("Fusion")
     apply_palette(app)
     app.setStyleSheet(STYLESHEET)
-    window = MainWindow(config, tutor, default_source_factory(config), autoconnect)
+    window = MainWindow(config, tutor, study, default_source_factory(config), autoconnect)
     window.show()
     return app.exec()
 

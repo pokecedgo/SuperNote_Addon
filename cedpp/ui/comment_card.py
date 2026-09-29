@@ -134,6 +134,11 @@ class CommentCard(QFrame):
     def update_from(self, c: Comment) -> None:
         self._clear_body()
         self._dot_timer.stop()
+        if c.requested:
+            asked = f"You asked: “{c.question}”" if c.question else "You circled this area"
+            self._body.addWidget(self._text(
+                asked, f"background: {theme.INK}; color: {theme.PAPER}; border-radius: 10px; "
+                       "padding: 6px 10px; font-size: 12.5px; font-weight: 600;"))
         if c.status == Status.PENDING:
             self._pending_label = self._text("Reading your handwriting", f"color: {theme.MUTED};")
             self._body.addWidget(self._pending_label)

@@ -3,26 +3,56 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit,
+                               QMainWindow, QMessageBox, QPushButton,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from ..comments import CommentStore, Status
 from ..config import APP_NAME, AppConfig
 from ..ink import InkEvent
 from ..mirror import DemoNotebookSource, FrameSource, MirrorSource
-from ..tutor import NoteTutor, TutorRequest
+from ..library import Library, LibraryError
+from ..tutor import NoteTutor, StudyAssistant, TutorRequest
+from ..tutor.base import zone_crop
 from . import theme
+from .ask_popup import AskPopup
 from .comments_panel import CommentsPanel
 from .connect_dialog import DEMO, ConnectDialog
+from .library_view import LibraryView
+from .neat_service import NeatService
 from .page_view import Anchor, PageView
+from .store_dialog import StoreDialog
 from .workers import MirrorThread, TutorThread
 
 log = logging.getLogger(__name__)
+
+
+class SearchBox(QLineEdit):
+    """Compact until focused (or holding a query), then widens for typing."""
+
+    COMPACT, WIDE = 108, 240
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedWidth(self.COMPACT)
+        self.textChanged.connect(lambda _t: self._fit())
+
+    def _fit(self) -> None:
+        self.setFixedWidth(self.WIDE if self.hasFocus() or self.text() else self.COMPACT)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self._fit()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self._fit()
 
 
 class Logo(QLabel):
@@ -35,12 +65,15 @@ class Logo(QLabel):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, config: AppConfig, tutor: NoteTutor,
+    def __init__(self, config: AppConfig, tutor: NoteTutor, study: StudyAssistant,
                  source_factory: Callable[[str], FrameSource],
                  autoconnect: Optional[str] = None) -> None:
         super().__init__()
         self.cfg = config
         self.tutor = tutor
+        self.study = study
+        self.library = Library(config.library_dir)
+        self.neat = NeatService(self.library, study)
         self.source_factory = source_factory
         self.settings = QSettings("CedPP", "SuperNoteCedPP")
         self.store = CommentStore()
@@ -55,8 +88,8 @@ class MainWindow(QMainWindow):
         self._queue: List[int] = []
 
         self.setWindowTitle(APP_NAME)
-        self.resize(1280, 900)
-        self.setMinimumSize(980, 700)
+        self.resize(1320, 900)
+        self.setMinimumSize(1120, 700)
         self._build()
 
         self._clock = QTimer(self)
@@ -79,17 +112,45 @@ class MainWindow(QMainWindow):
         bar.setFixedHeight(62)
         b = QHBoxLayout(bar)
         b.setContentsMargins(20, 10, 20, 10)
-        b.setSpacing(12)
+        b.setSpacing(8)
         b.addWidget(Logo())
         title = QLabel(APP_NAME)
         title.setObjectName("AppTitle")
+        title.setMinimumWidth(title.sizeHint().width() + 4)
         b.addWidget(title)
+        b.addSpacing(14)
+        seg = QFrame()
+        seg.setObjectName("Segment")
+        sl = QHBoxLayout(seg)
+        sl.setContentsMargins(3, 3, 3, 3)
+        sl.setSpacing(2)
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+        for i, label in enumerate(("Live", "Notebooks")):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setChecked(i == 0)
+            self.mode_group.addButton(btn, i)
+            sl.addWidget(btn)
+        self.mode_group.idClicked.connect(self._set_mode)
+        b.addWidget(seg)
+        seg.setMinimumWidth(seg.sizeHint().width())
         b.addSpacing(10)
-        self.page_label = QLabel("")
-        self.page_label.setObjectName("Muted")
-        b.addWidget(self.page_label)
         b.addStretch(1)
+        self.search_box = SearchBox()
+        self.search_box.setObjectName("SearchBox")
+        self.search_box.setPlaceholderText("⌕  Search")
+        self.search_box.setClearButtonEnabled(True)
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(280)
+        self._search_timer.timeout.connect(self._run_search)
+        self.search_box.textChanged.connect(lambda _t: self._search_timer.start())
+        self.search_box.returnPressed.connect(self._run_search)
+        b.addWidget(self.search_box)
         self.conn_pill = QLabel("Not connected")
+        self.conn_pill.setMaximumWidth(170)
         self.conn_pill.setObjectName("PillOff")
         b.addWidget(self.conn_pill)
         self.connect_btn = QPushButton("Connect")
@@ -104,9 +165,25 @@ class MainWindow(QMainWindow):
         self.record_btn.setToolTip("Start commenting on everything you write from now on (R)")
         self.record_btn.clicked.connect(self._toggle_record)
         b.addWidget(self.record_btn)
+        self.ask_btn = QPushButton("◌  Ask")
+        self.ask_btn.setCheckable(True)
+        self.ask_btn.setEnabled(False)
+        self.ask_btn.setCursor(Qt.PointingHandCursor)
+        self.ask_btn.setToolTip("While recording: draw a loop around anything on the page and "
+                                "Ced++ explains it (A)")
+        self.ask_btn.toggled.connect(self._toggle_lasso)
+        b.addWidget(self.ask_btn)
+        self.store_btn = QPushButton("⤓  Store")
+        self.store_btn.setEnabled(False)
+        self.store_btn.setCursor(Qt.PointingHandCursor)
+        self.store_btn.setToolTip("Save a snapshot of this page (and its comments) to a notebook (S)")
+        self.store_btn.clicked.connect(self._store_page)
+        b.addWidget(self.store_btn)
         outer.addWidget(bar)
 
-        body = QHBoxLayout()
+        self.stack = QStackedWidget()
+        live = QWidget()
+        body = QHBoxLayout(live)
         body.setContentsMargins(24, 0, 12, 0)
         body.setSpacing(18)
         body.addStretch(1)
@@ -114,6 +191,10 @@ class MainWindow(QMainWindow):
         self.page_view.anchor_clicked.connect(self._select)
         self.page_view.background_clicked.connect(lambda: self._select(None))
         self.page_view.layout_changed.connect(self._relayout)
+        self.page_view.zone_drawn.connect(self._on_zone_drawn)
+        self.ask_popup = AskPopup(self.page_view)
+        self.ask_popup.submitted.connect(self._ask_about_zone)
+        self.ask_popup.cancelled.connect(self._cancel_zone)
         body.addWidget(self.page_view)
         self.panel = CommentsPanel()
         self.panel.card_clicked.connect(self._select)
@@ -121,7 +202,10 @@ class MainWindow(QMainWindow):
         self.panel.retry_requested.connect(self._retry)
         body.addWidget(self.panel)
         body.addStretch(1)
-        outer.addLayout(body, 1)
+        self.stack.addWidget(live)
+        self.library_view = LibraryView(self.library, self.study, self.neat)
+        self.stack.addWidget(self.library_view)
+        outer.addWidget(self.stack, 1)
 
         foot = QHBoxLayout()
         foot.setContentsMargins(24, 4, 24, 8)
@@ -135,13 +219,19 @@ class MainWindow(QMainWindow):
         outer.addLayout(foot)
 
         QShortcut(QKeySequence("R"), self, activated=self.record_btn.click)
-        QShortcut(QKeySequence(Qt.Key_Escape), self, activated=lambda: self._select(None))
+        QShortcut(QKeySequence("S"), self, activated=self.store_btn.click)
+        QShortcut(QKeySequence("A"), self, activated=self.ask_btn.click)
+        QShortcut(QKeySequence.Find, self, activated=lambda: (self.search_box.setFocus(),
+                                                              self.search_box.selectAll()))
+        QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self._escape)
 
     def _set_status(self, text: str) -> None:
         self.status.setText(text)
 
     def _set_pill(self, text: str, on: bool) -> None:
-        self.conn_pill.setText(text)
+        self.conn_pill.setToolTip(text)
+        metrics = self.conn_pill.fontMetrics()
+        self.conn_pill.setText(metrics.elidedText(text, Qt.ElideRight, 160))
         self.conn_pill.setObjectName("Pill" if on else "PillOff")
         self.conn_pill.style().unpolish(self.conn_pill)
         self.conn_pill.style().polish(self.conn_pill)
@@ -182,6 +272,7 @@ class MainWindow(QMainWindow):
                  else "Mirroring " + self.address.split("//")[-1].split(":")[0])
         self._set_pill("●  " + label, True)
         self.record_btn.setEnabled(True)
+        self.store_btn.setEnabled(True)
         self.connect_btn.setText("Change")
         if not self.recording:
             self._set_status("Connected. Press Record (or R) when you're ready to write.")
@@ -195,6 +286,55 @@ class MainWindow(QMainWindow):
         self.page_view.set_frame(image)
         if resized:
             self._fit_page_width()
+
+    # ------------------------------------------------------------------ notebooks
+    def _set_mode(self, index: int) -> None:
+        self.mode_group.button(index).setChecked(True)
+        self.stack.setCurrentIndex(index)
+        live = index == 0
+        for widget in (self.ask_btn, self.store_btn):
+            widget.setVisible(live)          # live-only tools
+        if index == 1:
+            # Keep the open folder; the first time, open where you last stored a page.
+            last = self.settings.value("last_folder", "")
+            self.library_view.refresh(
+                select=self.library_view.folder or (Path(last) if last else None))
+        else:
+            QTimer.singleShot(0, self._fit_page_width)
+            QTimer.singleShot(0, self._relayout)
+
+    def _run_search(self) -> None:
+        self._search_timer.stop()
+        query = self.search_box.text()
+        if query.strip():
+            if self.stack.currentIndex() != 1:
+                self._set_mode(1)
+            self.library_view.show_search(query)
+        else:
+            self.library_view.close_search()
+
+    def _store_page(self) -> None:
+        frame = self.mirror.latest_frame() if self.mirror else None
+        if frame is None:
+            self._set_status("Connect your Supernote first - there's no page to store yet.")
+            return
+        comments = [c.to_dict() for c in self.store.for_page(self.page_index)
+                    if c.status == Status.READY]
+        last = self.settings.value("last_folder", "")
+        dialog = StoreDialog(self.library, frame,
+                             f"Page {self.page_index + 1} · {time.strftime('%b %d')}",
+                             len(comments), Path(last) if last else None, self)
+        if not dialog.exec() or dialog.chosen_folder is None:
+            return
+        try:
+            page = self.library.add_page(dialog.chosen_folder, frame, dialog.title, comments)
+        except LibraryError as exc:
+            QMessageBox.warning(self, "Couldn't store page", str(exc))
+            return
+        self.settings.setValue("last_folder", str(dialog.chosen_folder))
+        self.neat.request(page)      # neat copy + searchable transcript, in the background
+        self._set_status(f"Stored “{page.title}” in {self.library.relative(page.folder)}. "
+                         "Writing its neat copy in the background…")
 
     # ------------------------------------------------------------------ recording
     def _toggle_record(self) -> None:
@@ -211,12 +351,15 @@ class MainWindow(QMainWindow):
         self.record_started = time.monotonic()
         self.mirror.start_recording()
         self.page_view.set_recording(True)
+        self.ask_btn.setEnabled(True)
         self._tick()
         self._update_page_label()
         self._set_status("Recording — Ced++ comments whenever you pause writing.")
 
     def _stop_recording(self) -> None:
         self.recording = False
+        self.ask_btn.setChecked(False)
+        self.ask_btn.setEnabled(False)
         self.record_btn.setChecked(False)
         self.record_btn.setText("●  Record")
         self.page_view.set_recording(False)
@@ -243,7 +386,7 @@ class MainWindow(QMainWindow):
             self.record_btn.setText(f"■  Stop  {s // 60:02d}:{s % 60:02d}")
 
     def _update_page_label(self) -> None:
-        self.page_label.setText(f"Page {self.page_index + 1}")
+        self.page_view.set_page_number(self.page_index + 1)
 
     def _on_page_changed(self, index: int, first_frame) -> None:
         self.page_index = index
@@ -265,6 +408,50 @@ class MainWindow(QMainWindow):
         self._relayout()
         self._pump()
 
+    # ------------------------------------------------------------------ ask about area
+    def _escape(self) -> None:
+        if self.ask_btn.isChecked():
+            self.ask_btn.setChecked(False)
+        else:
+            self._select(None)
+
+    def _toggle_lasso(self, on: bool) -> None:
+        if on and self.stack.currentIndex() != 0:
+            self._set_mode(0)
+        self.page_view.set_lasso(on)
+        if on:
+            self._select(None)
+            self._set_status("Draw a loop around what you want help with. Esc to cancel.")
+        else:
+            self._cancel_zone()
+
+    def _on_zone_drawn(self, zone) -> None:
+        self._draft_zone = zone
+        self.ask_popup.open_at(self.page_view.zone_bottom_left(zone).toPoint())
+
+    def _cancel_zone(self) -> None:
+        self._draft_zone = None
+        self.ask_popup.hide()
+        self.page_view.set_draft(None)
+
+    def _ask_about_zone(self, question: str) -> None:
+        zone = getattr(self, "_draft_zone", None)
+        frame = self.mirror.latest_frame() if self.mirror else None
+        self.page_view.set_draft(None)
+        self._draft_zone = None
+        self.ask_btn.setChecked(False)
+        if zone is None or frame is None:
+            return
+        crop, bbox = zone_crop(frame, zone)
+        comment = self.store.add(self.page_index, bbox, crop, frame, zone=zone, question=question)
+        self.page_snapshots[self.page_index] = frame
+        self.panel.upsert(comment)
+        self._queue.insert(0, comment.id)          # your questions jump the queue
+        self._refresh_anchors()
+        self._select(comment.id)
+        self._pump()
+        self._set_status("Ced++ is looking at the area you circled…")
+
     def _pump(self) -> None:
         while self._queue and len(self._tutor_threads) < self.cfg.tutor.max_parallel:
             cid = self._queue.pop(0)
@@ -272,7 +459,8 @@ class MainWindow(QMainWindow):
             if c is None or c.status != Status.PENDING:
                 continue
             request = TutorRequest(c.crop, c.page, c.bbox,
-                                   self.store.history(c.page_index, self.cfg.tutor.history_items))
+                                   self.store.history(c.page_index, self.cfg.tutor.history_items),
+                                   requested=c.requested, question=c.question)
             thread = TutorThread(self.tutor, cid, request)
             thread.done.connect(self._on_tip)
             thread.failed.connect(self._on_tip_failed)
@@ -291,7 +479,9 @@ class MainWindow(QMainWindow):
         if c is None or c.status == Status.RESOLVED:
             return
         c.tip = tip
-        c.status = Status.SKIPPED if tip.skip else Status.READY
+        c.status = Status.SKIPPED if tip.skip and not c.requested else Status.READY
+        if c.requested:
+            self._set_status(f"Ced++ answered about the area you circled (comment {c.number}).")
         if tip.skip:
             self.panel.remove(cid)
         elif c.page_index == self.page_index:
@@ -349,7 +539,7 @@ class MainWindow(QMainWindow):
         for c in self.store.for_page(self.page_index):
             anchors[c.id] = Anchor(c.number, c.bbox, pending=c.status == Status.PENDING,
                                    error=c.status == Status.ERROR,
-                                   heads_up=bool(c.tip and c.tip.heads_up))
+                                   heads_up=bool(c.tip and c.tip.heads_up), zone=c.zone)
         self.page_view.set_anchors(anchors)
 
     def _relayout(self) -> None:
@@ -381,6 +571,8 @@ class MainWindow(QMainWindow):
         self._disconnect()
         for thread in list(self._tutor_threads.values()):
             thread.wait(3000)
+        self.library_view.detail.wait_for_threads()
+        self.neat.wait()
         super().closeEvent(event)
 
 

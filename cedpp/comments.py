@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -35,6 +35,12 @@ class Comment:
     number: int = 0                       # 1, 2, 3... per page, shown on the anchor
     crop: Optional[np.ndarray] = field(default=None, repr=False)
     page: Optional[np.ndarray] = field(default=None, repr=False)
+    zone: Optional[List[Tuple[int, int]]] = None   # freehand loop drawn by the user
+    question: str = ""
+
+    @property
+    def requested(self) -> bool:
+        return self.zone is not None
 
     @property
     def visible(self) -> bool:
@@ -46,6 +52,8 @@ class Comment:
             "bbox": list(self.bbox), "created_at": self.created_at.isoformat(timespec="seconds"),
             "status": self.status.value, "tip": self.tip.to_dict() if self.tip else None,
             "error": self.error or None,
+            "requested": self.requested, "question": self.question or None,
+            "zone": [list(p) for p in self.zone] if self.zone else None,
         }
 
 
@@ -55,10 +63,11 @@ class CommentStore:
         self.comments: Dict[int, Comment] = {}
         self._page_numbers: Dict[int, itertools.count] = {}
 
-    def add(self, page_index: int, bbox: BBox, crop=None, page=None) -> Comment:
+    def add(self, page_index: int, bbox: BBox, crop=None, page=None,
+            zone=None, question: str = "") -> Comment:
         counter = self._page_numbers.setdefault(page_index, itertools.count(1))
         c = Comment(next(self._ids), page_index, bbox, datetime.now(), crop=crop, page=page,
-                    number=next(counter))
+                    number=next(counter), zone=zone, question=question)
         self.comments[c.id] = c
         return c
 
@@ -85,6 +94,8 @@ class CommentStore:
             for c in items:
                 t = c.tip
                 flag = " ⚠️" if t.heads_up else ""
+                if c.question:
+                    lines.append(f"> You asked: {c.question}  ")
                 lines.append(f"**{c.number}. {t.title}**{flag} — `{t.recognized}`  ")
                 lines.append(t.comment)
                 lines += [f"- {e}" for e in t.extras]

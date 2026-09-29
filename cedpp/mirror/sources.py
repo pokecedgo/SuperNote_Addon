@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Iterator, List, Optional
 
 import numpy as np
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 
 from .mjpeg import iter_images, open_stream

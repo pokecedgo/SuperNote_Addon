@@ -41,7 +41,6 @@ class InkConfig:
     cluster_gap_cells: int = 3
     # If more than this fraction of the page changes at once, it's a page turn.
     page_change_fraction: float = 0.18
-    page_settle_s: float = 0.8
     crop_padding_px: int = 28
     # Fractions of the frame to ignore (e.g. a status bar in the mirror).
     ignore_top: float = 0.0

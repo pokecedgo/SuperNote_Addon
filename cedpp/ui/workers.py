@@ -11,7 +11,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 from ..config import InkConfig, MirrorConfig
-from ..ink import InkTracker, pad_bbox
+from ..ink import InkTracker, PageIdentifier, pad_bbox
 from ..mirror import FrameSource
 from ..tutor import NoteTutor, TutorError, TutorRequest
 
@@ -31,13 +31,15 @@ class MirrorThread(QThread):
     disconnected = Signal(str)          # reason
     ink_events = Signal(object)         # List[InkEvent]
     pending_changed = Signal(object)    # bbox or None
-    page_changed = Signal(int, object)  # new page index, first frame of that page
+    page_changed = Signal(int, object, bool)  # page index, frame, is a new page
 
-    def __init__(self, source: FrameSource, mirror_cfg: MirrorConfig, ink_cfg: InkConfig) -> None:
+    def __init__(self, source: FrameSource, mirror_cfg: MirrorConfig, ink_cfg: InkConfig,
+                 pages: Optional[PageIdentifier] = None) -> None:
         super().__init__()
         self.source = source
         self.cfg = mirror_cfg
         self.tracker = InkTracker(ink_cfg)
+        self.pages = pages or PageIdentifier()     # shared across reconnects
         self._running = True
         self._lock = threading.Lock()
         self._want_start = False
@@ -71,15 +73,18 @@ class MirrorThread(QThread):
         # Very large mirrors are tracked at half size; boxes are scaled back up.
         scale = 2 if full.shape[0] > self.cfg.track_max_height else 1
         frame = full[::scale, ::scale] if scale > 1 else full
+        now = time.monotonic()
+        switch = self.pages.update(frame, now)       # runs even when not recording
+        if switch is not None:
+            self.tracker.reset(frame, switch.index)
+            self.page_changed.emit(switch.index, full.copy(), switch.is_new)
         if want_stop:
             self.tracker.stop()
         if want_start:
             self.tracker.start(frame)
         if not self.tracker.active:
             return
-        update = self.tracker.update(frame, time.monotonic())
-        if update.page_changed:
-            self.page_changed.emit(update.page_index, full.copy())
+        update = self.tracker.update(frame, now)
         pending = update.pending_bbox
         if pending is not None and scale > 1:
             pending = tuple(v * scale for v in pending)

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineE
 
 from ..comments import CommentStore, Status
 from ..config import APP_NAME, AppConfig
-from ..ink import InkEvent
+from ..ink import InkEvent, PageIdentifier
 from ..mirror import DemoNotebookSource, FrameSource, MirrorSource
 from ..library import Library, LibraryError
 from ..tutor import NoteTutor, StudyAssistant, TutorRequest
@@ -97,6 +97,7 @@ class MainWindow(QMainWindow):
         self.page_index = 0
         self.selected: Optional[int] = None
         self.page_snapshots: Dict[int, np.ndarray] = {}
+        self.page_ids = PageIdentifier()            # same page numbers across reconnects
         self._tutor_threads: Dict[int, TutorThread] = {}
         self._queue: List[int] = []
 
@@ -266,7 +267,7 @@ class MainWindow(QMainWindow):
         self._disconnect()
         self.address = address
         source = self.source_factory(address)
-        self.mirror = MirrorThread(source, self.cfg.mirror, self.cfg.ink)
+        self.mirror = MirrorThread(source, self.cfg.mirror, self.cfg.ink, self.page_ids)
         self.mirror.frame_ready.connect(self._on_frame)
         self.mirror.connected.connect(self._on_connected)
         self.mirror.disconnected.connect(self._on_disconnected)
@@ -460,14 +461,26 @@ class MainWindow(QMainWindow):
 
     def _update_page_label(self) -> None:
         self.page_view.set_page_number(self.page_index + 1)
+        self.panel.set_page(self.page_index + 1)
 
-    def _on_page_changed(self, index: int, first_frame) -> None:
+    def _on_page_changed(self, index: int, frame, is_new: bool) -> None:
+        first = index == 0 and is_new
+        if index == self.page_index and not is_new:
+            return
         self.page_index = index
-        self.page_snapshots[index] = first_frame
+        self.page_snapshots[index] = frame
+        self._cancel_zone()
         self._select(None)
         self._update_page_label()
         self._refresh_page_comments()
-        self._set_status(f"New page detected — now on page {index + 1}.")
+        n = len(self.store.for_page(index))
+        if first:
+            pass
+        elif is_new:
+            self._set_status(f"New page — page {index + 1}. Its comments start fresh.")
+        else:
+            self._set_status(f"Back on page {index + 1} — showing its "
+                             f"{n} comment{'s' if n != 1 else ''}.")
 
     # ------------------------------------------------------------------ comments
     def _on_ink_events(self, events: List[InkEvent]) -> None:
@@ -480,6 +493,8 @@ class MainWindow(QMainWindow):
             self._queue.append(comment.id)
         self._refresh_anchors()
         self._relayout()
+        if self.selected is None:
+            self.panel.scroll_to_top()          # newest comment is at the top
         self._pump()
 
     # ------------------------------------------------------------------ ask about area
@@ -620,15 +635,7 @@ class MainWindow(QMainWindow):
         self.page_view.set_anchors(anchors)
 
     def _relayout(self) -> None:
-        desired = {}
-        for cid in self.panel.cards:
-            c = self.store.get(cid)
-            if c is None:
-                continue
-            rect = self.page_view.map_bbox(c.bbox)
-            global_y = self.page_view.mapToGlobal(rect.topLeft().toPoint()).y()
-            desired[cid] = self.panel.canvas_y_for(global_y) - 6
-        self.panel.relayout(desired)
+        self.panel.relayout()
 
     def _fit_page_width(self) -> None:
         """Size the page to the window height so the comment margin hugs it."""

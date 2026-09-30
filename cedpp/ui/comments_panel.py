@@ -1,7 +1,7 @@
 """Right-hand margin: cards float beside their anchor, like Google Docs comments."""
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
@@ -11,37 +11,6 @@ from . import theme
 from .comment_card import CARD_WIDTH, CommentCard
 
 GAP = 10
-
-
-def layout_cards(items: List[Tuple[int, float, int]], selected: Optional[int],
-                 top: float = 0.0, gap: float = GAP) -> Dict[int, float]:
-    """Place cards as close to their anchors as possible without overlapping.
-
-    items: (id, desired_y, height). The selected card sits exactly beside its
-    anchor and the others make room around it (the Google Docs behaviour).
-    """
-    items = sorted(items, key=lambda it: (it[1], it[0]))
-    ys: Dict[int, float] = {}
-    idx = next((i for i, it in enumerate(items) if it[0] == selected), None)
-    if idx is None:
-        cursor = top
-        for cid, desired, h in items:
-            ys[cid] = max(desired, cursor)
-            cursor = ys[cid] + h + gap
-        return ys
-    cid, desired, h = items[idx]
-    ys[cid] = max(desired, top)
-    cursor = ys[cid] + h + gap
-    for cid, desired, h in items[idx + 1:]:
-        ys[cid] = max(desired, cursor)
-        cursor = ys[cid] + h + gap
-    ceiling = ys[items[idx][0]]
-    for cid, desired, h in reversed(items[:idx]):
-        ys[cid] = min(desired, ceiling - gap - h)
-        ceiling = ys[cid]
-    if items and ys[items[0][0]] < top:     # ran off the top: fall back to stacking
-        return layout_cards(items, None, top, gap)
-    return ys
 
 
 class CommentsPanel(QFrame):
@@ -61,6 +30,7 @@ class CommentsPanel(QFrame):
         head.setContentsMargins(18, 18, 18, 6)
         title = QLabel("COMMENTS")
         title.setObjectName("SectionTitle")
+        self.title = title
         self.count_label = QLabel("")
         self.count_label.setObjectName("Small")
         head.addWidget(title)
@@ -129,38 +99,40 @@ class CommentsPanel(QFrame):
             card.set_selected(cid == comment_id)
 
     # ------------------------------------------------------------------ layout
-    def relayout(self, desired: Dict[int, float], animate: bool = True) -> None:
-        """desired: comment id -> y (in canvas coordinates) of its anchor."""
+    def set_page(self, page_number: int) -> None:
+        self.title.setText(f"COMMENTS · PAGE {page_number}")
+        self.empty.setText("No comments on this page yet.\n\nPress Record and start writing, "
+                           "or use Ask to circle something.")
+
+    def relayout(self, desired: Optional[Dict[int, float]] = None, animate: bool = True) -> None:
+        """Stack the cards newest first (comment ids increase over time)."""
         self.empty.setVisible(not self.cards)
         n = len(self.cards)
-        self.count_label.setText(f"{n} on this page" if n else "")
-        items = []
-        for cid, card in self.cards.items():
-            card.fit_height()
-            items.append((cid, desired.get(cid, 0.0), card.height()))
-        ys = layout_cards(items, self.selected, top=8)
-        bottom = 0
-        for cid, y in ys.items():
+        self.count_label.setText(f"{n} comment{'s' if n != 1 else ''}" if n else "")
+        y, bottom = 8, 0
+        for cid in sorted(self.cards, reverse=True):
             card = self.cards[cid]
+            card.fit_height()
             x = 4 if cid == self.selected else 14     # selected card nudges left
-            target = QPoint(x, int(y))
-            bottom = max(bottom, int(y) + card.height())
+            target = QPoint(x, y)
+            y += card.height() + GAP
+            bottom = y
             if not animate or not card.isVisible() or card.pos() == QPoint(0, 0):
                 card.move(target)
                 continue
             anim = self._anims.get(cid)
             if anim is None:
                 anim = QPropertyAnimation(card, b"pos", self)
-                anim.setDuration(180)
+                anim.setDuration(200)
                 anim.setEasingCurve(QEasingCurve.OutCubic)
                 self._anims[cid] = anim
             anim.stop()
             anim.setEndValue(target)
             anim.start()
-        self.canvas.setFixedHeight(max(self.scroll.viewport().height(), bottom + 40))
+        self.canvas.setFixedHeight(max(self.scroll.viewport().height(), bottom + 30))
 
-    def canvas_y_for(self, global_y: int) -> float:
-        return float(self.canvas.mapFromGlobal(QPoint(0, global_y)).y())
+    def scroll_to_top(self) -> None:
+        self.scroll.verticalScrollBar().setValue(0)
 
     def scroll_to(self, comment_id: int) -> None:
         card = self.cards.get(comment_id)

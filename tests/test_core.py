@@ -119,15 +119,56 @@ def test_erase_then_rewrite_is_detected():
     assert len(t.update(rewrite, 3.1).events) == 1
 
 
-def test_page_turn_resets_baseline_after_settling():
-    t = InkTracker(cfg(page_settle_s=0.5))
+def test_page_turn_is_not_ink_and_reset_starts_fresh():
+    t = InkTracker(cfg())
     t.start(blank())
-    new_page = write(blank(), 0, 0, W, int(H * 0.5))  # half the page changed
-    assert not t.update(new_page, 0.0).page_changed
-    assert not t.update(new_page, 0.2).page_changed
-    upd = t.update(new_page, 0.8)
-    assert upd.page_changed and upd.page_index == 1
-    assert t.update(new_page, 5.0).events == []       # page content isn't "new ink"
+    new_page = write(blank(), 0, 0, W, int(H * 0.5))  # half the screen changed
+    assert t.update(new_page, 0.0).events == []
+    assert t.update(new_page, 5.0).events == []       # still not treated as writing
+    t.reset(new_page, 3)
+    assert t.page_index == 3
+    more = write(new_page, 100, 600, 300, 630)        # writing on the new page
+    t.update(more, 6.0)
+    ev = t.update(more, 9.0).events
+    assert len(ev) == 1 and ev[0].page_index == 3
+
+
+def _page(lines):
+    f = np.full((1872, 1404), 255, np.uint8)
+    for y, x1, x2 in lines:
+        f[y:y + 6, x1:x2] = 20
+    return f
+
+
+PAGE_A = _page([(200, 100, 900), (300, 100, 700), (400, 100, 1200), (500, 100, 600)])
+PAGE_B = _page([(900, 300, 1300), (1100, 200, 800), (1300, 400, 1000), (1500, 150, 1250)])
+
+
+def test_page_identifier_tells_pages_apart_and_brings_old_ones_back():
+    from cedpp.ink import PageIdentifier
+    ids = PageIdentifier(settle_s=0.5)
+    first = ids.update(PAGE_A, 0.0)
+    assert first.index == 0 and first.is_new
+    assert ids.update(PAGE_B, 1.0) is None            # just changed: wait to settle
+    switch = ids.update(PAGE_B, 1.6)
+    assert switch.index == 1 and switch.is_new
+    written = PAGE_A.copy()
+    written[600:606, 100:700] = 20                    # page A got a new line meanwhile
+    ids.update(written, 3.0)
+    back = ids.update(written, 3.6)
+    assert back.index == 0 and not back.is_new       # recognised as page A again
+    more = written.copy()
+    more[700:706, 100:500] = 20                       # writing more is not a switch
+    assert ids.update(more, 4.0) is None and ids.current == 0
+
+
+def test_page_identifier_ignores_flicker():
+    from cedpp.ink import PageIdentifier
+    ids = PageIdentifier(settle_s=0.8)
+    ids.update(PAGE_A, 0.0)
+    ids.update(PAGE_B, 1.0)                           # a menu flashes up...
+    assert ids.update(PAGE_A, 1.5) is None            # ...and closes: still page A
+    assert ids.current == 0
 
 
 def test_long_continuous_writing_gets_batched():
@@ -252,3 +293,13 @@ def test_zone_comment_is_saved_with_its_question(tmp_path):
     saved = json.loads((folder / "comments.json").read_text())[0]
     assert saved["question"] == "what's this?" and saved["zone"][1] == [50, 0]
     assert "You asked: what's this?" in (folder / "notes.md").read_text()
+
+
+def test_first_words_on_a_blank_page_are_not_a_page_switch():
+    from cedpp.ink import PageIdentifier
+    ids = PageIdentifier(settle_s=0.5)
+    blank_page = _page([])
+    ids.update(blank_page, 0.0)
+    heading = _page([(150, 90, 500)])                 # first word(s) on an empty page
+    assert ids.update(heading, 1.0) is None
+    assert ids.update(heading, 2.0) is None and ids.current == 0

@@ -8,7 +8,8 @@ Pure numpy (no Qt) so it's fast to test. Feed it every frame with `update()`:
                   can rewrite in the same spot
 * pause         - once the ink stops changing for `pause_s`, the new writing is
                   grouped into clusters and returned as `InkEvent`s, then committed
-* page turn     - a large change that settles becomes the new baseline
+* page turn     - a large change is ignored; PageIdentifier picks the page and
+                  calls reset()
 """
 from __future__ import annotations
 
@@ -34,7 +35,6 @@ class InkEvent:
 @dataclass
 class TrackerUpdate:
     events: List[InkEvent] = field(default_factory=list)
-    page_changed: bool = False
     page_index: int = 0
     pending_bbox: Optional[BBox] = None   # writing in progress (not yet commented)
 
@@ -92,19 +92,22 @@ class InkTracker:
         self._prev_cells: Optional[np.ndarray] = None
         self._last_change = 0.0
         self._first_ink: Optional[float] = None
-        self._settling_since: Optional[float] = None
-        self._prev_frame: Optional[np.ndarray] = None
 
     # ------------------------------------------------------------------ control
     def start(self, frame: np.ndarray) -> None:
         """Begin tracking: everything already on the page is ignored."""
         self.baseline = frame.copy()
         self._reset_pending()
-        self._settling_since = None
 
     def stop(self) -> None:
         self.baseline = None
         self._reset_pending()
+
+    def reset(self, frame: np.ndarray, page_index: int) -> None:
+        """A different page is showing: only writing added from now on is new."""
+        self.page_index = page_index
+        if self.baseline is not None:
+            self.start(frame)
 
     @property
     def active(self) -> bool:
@@ -162,26 +165,12 @@ class InkTracker:
             return result
         c = self.cfg
 
-        # Page turn: most of the page changed. Wait until it stops changing.
+        # Most of the screen changed (page turn, menu): not handwriting. The
+        # PageIdentifier decides which page this is and calls reset().
         changed = np.abs(frame.astype(np.int16) - self.baseline.astype(np.int16)) > c.darken_threshold
         if changed.mean() > c.page_change_fraction:
-            prev = self._prev_frame
-            self._prev_frame = frame
-            moving = prev is None or prev.shape != frame.shape or \
-                (np.abs(frame.astype(np.int16) - prev.astype(np.int16)) > c.darken_threshold).mean() > 0.002
-            if moving or self._settling_since is None:
-                self._settling_since = now
-                return result
-            if now - self._settling_since >= c.page_settle_s:
-                self.baseline = frame.copy()
-                self.page_index += 1
-                self._reset_pending()
-                self._settling_since = None
-                result.page_changed = True
-                result.page_index = self.page_index
+            self._reset_pending()
             return result
-        self._settling_since = None
-        self._prev_frame = frame
 
         # Erasing: accept lighter pixels into the baseline.
         lighter = frame.astype(np.int16) - self.baseline.astype(np.int16) > c.darken_threshold
